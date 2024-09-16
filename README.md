@@ -10,6 +10,13 @@ Pytorch版本实现的VQVAE(仅供学习)
 
 ![vqvae](./assets/vqvae-architecture.png)
 
+## Loss
+
+![loss](./assets/vqvae_loss.png)
+
+## Inference
+
+![推理](./work_dirs/vqvae_reconstruction.jpg)
 
 ## Acknowledgements
 
