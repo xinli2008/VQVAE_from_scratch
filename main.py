@@ -9,11 +9,11 @@ import os
 
 def get_dataloader(dataset_type, batch_size, img_shape, is_train = True):
     if dataset_type == "MNIST":
-        # 加载MNIST数据集
         custom_transform = transforms.Compose([
-            transforms.Resize(img_shape),
-            transforms.ToTensor(),
-            transforms.Normalize((0.5), (0.5))
+            transforms.Resize(img_shape),       # 默认使用的是双线性插值
+            transforms.ToTensor(),              # 将numpy或者PIL转化为tensor, 并且将图像像素从[0,255]转化为[0,1]之间
+            transforms.Normalize((0.5), (0.5))  # transformers.normalize传入的是值是均值和标准差, 因为均值和标准差只传入了一个0.5,这意味着假定图像只有一个颜色通道(如灰度图),或者对所有通道使用相同的值。
+            # NOTE: 标准化的计算公式为：(input[channel] - mean[channel]) / std[channel]。在这个例子中，每个通道的像素值将从[0.0, 1.0]转换到[-1.0, 1.0]。
         ])
         dataset = datasets.MNIST(root = "./data", train = is_train, transform = custom_transform, download = True)
     else:
@@ -43,13 +43,8 @@ def train_vqvae(
     # 初始化TensorBoard
     writer = SummaryWriter(log_dir = log_dir)
 
-    # 加载数据集
     dataloader = get_dataloader(dataset_type, batch_size = batch_size, img_shape = img_shape)
-
-    # 模型加载到指定设备
     model.to(device)
-    
-    # 将模型设置为训练模式
     model.train()
 
     # 设置优化器和损失函数
@@ -57,7 +52,6 @@ def train_vqvae(
     mse_loss = nn.MSELoss()
 
     for epoch in range(num_epochs):
-        # 初始化模型的loss
         total_loss = 0.0
 
         for i, (x, _) in enumerate(dataloader):
@@ -82,7 +76,6 @@ def train_vqvae(
             loss.backward()
             optimizer.step()
 
-            # 累加损失
             total_loss += loss.item() * current_batch_size
 
             # 将每个batch的损失记录到tensorboard中

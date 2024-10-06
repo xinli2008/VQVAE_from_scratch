@@ -20,10 +20,18 @@ class VQVAE(nn.Module):
 
     def __init__(self, input_dim, dim, n_embedding):
         super().__init__()
-        self.encoder = nn.Sequential(nn.Conv2d(input_dim, dim, 4, 2, 1),
-                                     nn.ReLU(), nn.Conv2d(dim, dim, 4, 2, 1),
-                                     nn.ReLU(), nn.Conv2d(dim, dim, 3, 1, 1),
-                                     ResidualBlock(dim), ResidualBlock(dim))
+        self.encoder = nn.Sequential(
+                                nn.Conv2d(input_dim, dim, 4, 2, 1),
+                                nn.ReLU(),
+                                # NOTE: 关于nn.ReLU中inplace参数的解释：
+                                # inplace = False(默认): 不在原地操作, 会创建并返回一个姓的张量, 输入张量保持不变。
+                                # inplace = True, 在原地操作, ReLU直接修改输入张量, 不会创建新的张量。优点是节省内存。
+                                nn.Conv2d(dim, dim, 4, 2, 1),
+                                nn.ReLU(), 
+                                nn.Conv2d(dim, dim, 3, 1, 1),
+                                ResidualBlock(dim), 
+                                ResidualBlock(dim)
+                                )
         
         # 创建了一个嵌入矩阵, 它的形状为[n_embedding, dim]。
         # 这个嵌入矩阵可以看做是一个查找表, 表中的每一行是一个长度为dim的嵌入向量, 共有n_embedding行。
@@ -34,14 +42,17 @@ class VQVAE(nn.Module):
         self.vq_embedding.weight.data.uniform_(-1.0 / n_embedding,
                                                1.0 / n_embedding)
         self.decoder = nn.Sequential(
-            nn.Conv2d(dim, dim, 3, 1, 1),
-            ResidualBlock(dim), ResidualBlock(dim),
-            nn.ConvTranspose2d(dim, dim, 4, 2, 1), nn.ReLU(),
-            nn.ConvTranspose2d(dim, input_dim, 4, 2, 1))
+                                    nn.Conv2d(dim, dim, 3, 1, 1),
+                                    ResidualBlock(dim), 
+                                    ResidualBlock(dim),
+                                    nn.ConvTranspose2d(dim, dim, 4, 2, 1), 
+                                    nn.ReLU(),
+                                    nn.ConvTranspose2d(dim, input_dim, 4, 2, 1)
+                                    )
         self.n_downsample = 2
 
     def forward(self, x):
-        # encode
+        # 编码器部分
         ze = self.encoder(x)
 
         # ze: [N, C, H, W]
@@ -54,18 +65,23 @@ class VQVAE(nn.Module):
         embedding_broadcast = embedding.reshape(1, K, C, 1, 1)
         ze_broadcast = ze.reshape(N, 1, C, H, W)
         
-        # 每个编码特征ze与所有嵌入向量之间的欧式距离（即平方差的和）
+        # NOTE: 计算VQ-VAE中每个编码特征向量ze和所有离散的码本codebook嵌入向量之间的距离, 并找到距离最近的码本向量, 也就是量化过程中选择最近邻的过程。
         distance = torch.sum((embedding_broadcast - ze_broadcast)**2, 2)
+        # NOTE: nearest_neighbor返回的是一个[N,H,W]的向量, 它包含了每个编码特征在码本中最接近的嵌入向量的索引。
+        # 具体来说, argmin会沿着第1个维度(即K维度,表示码本中嵌入向量的数量)寻找最小的值。
         nearest_neighbor = torch.argmin(distance, 1)
-        # make C to the second dim
+        
+        # NOTE: 通过 nearest_neighbor 索引从 vq_embedding 中查找最近的离散嵌入向量，得到一个形状为 [N, H, W, C] 的张量 zq
         zq = self.vq_embedding(nearest_neighbor).permute(0, 3, 1, 2)
         
-        # 我们知道在VQ-VAE的前向传播中, ze通过codebook得到zq, 此时它已经从连续的向量变化离散的向量。
-        # 离散的量化操作不可微，因此无法直接通过zq计算反向传播的梯度
-        # 通过使用 detach() 技巧, VQ-VAE能够在不依赖zq梯度的情况下让编码器继续接收梯度更新, 从而解决训练问题
+        # NOTE: 在VQ-VAE中, 输入线经过encoder得到ze, 在经过codebook得到量化后的zq, zq在经过decoder得到重建后的信息。
+        # 但是, zq是不可微的, 所以无法直接通过zq计算反向传播的梯度。
+        # NOTE: detach()是pytorch中用于从计算图中分离张量的方法, 表示这个张量在计算反向传播时不会参与梯度计算。
+        # 也就是说, 通过detach, 我们可以控制zq-ze这部分不会参数梯度计算。
+        # 所以说, 使用了下面这部分代码, decoder_input首先接受到了正确的信息zq, 并且编码器可以继续接收梯度更新并进行训练。
         decoder_input = ze + (zq - ze).detach()
 
-        # decode
+        # 解码器部分
         x_hat = self.decoder(decoder_input)
         return x_hat, ze, zq
 
